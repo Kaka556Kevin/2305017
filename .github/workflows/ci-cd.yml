@@ -57,21 +57,27 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Debug SSH target
+      - name: Test SSH connectivity on port 2222
         run: |
-          echo "Using SERVER_IP = ${{ secrets.SERVER_IP }}"
-          nc -z -v -w5 ${{ secrets.SERVER_IP }} 443 && echo "Port 443 open" || echo "Port 443 closed"
+          echo "Checking SSH port 2222 on ${{ secrets.SERVER_IP }}..."
+          for i in {1..5}; do
+            if nc -z ${{ secrets.SERVER_IP }} 2222; then
+              echo "SSH port 2222 is open" && break
+            else
+              echo "Port 2222 closed, retrying in 10s..." && sleep 10
+            fi
+          done
 
       - name: Add server to known_hosts (allow failures)
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -p 443 -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts || true
+          ssh-keyscan -p 2222 -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts || true
 
-      - name: Deploy via SSH on port 443
+      - name: Deploy via SSH (port 2222)
         env:
           IMAGE_NAME: "ghcr.io/kaka556kevin/2305017"
         run: |
-          ssh -vvv -p 443 -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} <<EOF
+          ssh -vvv -p 2222 -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} <<EOF
             echo "$GITHUB_TOKEN" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker pull $IMAGE_NAME:${{ github.sha }}
             docker rm -f my-app || true
