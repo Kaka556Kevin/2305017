@@ -85,4 +85,4 @@ jobs:
             docker pull $IMAGE_NAME:${{ github.sha }}
             docker rm -f my-app || true
             docker run -d -p 80:80 --name my-app $IMAGE_NAME:${{ github.sha }}
-          EOF
+EOF
