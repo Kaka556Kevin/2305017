@@ -1,0 +1,75 @@
+name: CI-CD Pipeline
+
+# Pipeline akan berjalan setiap kali ada push ke branch 'main' (atau 'master', tergantung repo Anda)
+on:
+  push:
+    branches: 
+      - main
+
+#  workflow_dispatch: 
+
+jobs:
+  build-and-push:
+    name: Build & Publish Docker Image
+    runs-on: ubuntu-latest
+    steps:
+      # 1) Checkout kode
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # 2) Login ke GitHub Container Registry (GitHub Packages)
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 3) Build Docker image, tag dengan commit SHA dan :latest
+      - name: Build Docker image
+        run: |
+          IMAGE_NAME="ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}"
+          TAG_COMMIT="${IMAGE_NAME}:${{ github.sha }}"
+          TAG_LATEST="${IMAGE_NAME}:latest"
+          docker build -t "$TAG_COMMIT" -t "$TAG_LATEST" .
+      
+      # 4) Push kedua tag ke registry
+      - name: Push Docker image
+        run: |
+          IMAGE_NAME="ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}"
+          TAG_COMMIT="${IMAGE_NAME}:${{ github.sha }}"
+          TAG_LATEST="${IMAGE_NAME}:latest"
+          docker push "$TAG_COMMIT"
+          docker push "$TAG_LATEST"
+
+  deploy:
+    name: Deploy to Production Server
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      # 1) Checkout (meskipun tidak strictly perlu, tapi sering dipakai untuk context)
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # 2) Setup SSH key
+      - name: Setup SSH Key for Deployment
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          # Pastikan known_hosts agar tidak prompt
+          ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
+        shell: bash
+
+      # 3) Pull & restart container di server via SSH
+      - name: Deploy via SSH
+        run: |
+          IMAGE_NAME="ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}"
+          TAG_COMMIT="${IMAGE_NAME}:${{ github.sha }}"
+
+          ssh -i ~/.ssh/id_rsa ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} \
+            "docker login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }} && \
+             docker pull $TAG_COMMIT && \
+             docker rm -f my-app    || true && \
+             docker run -d -p 80:80 --name my-app $TAG_COMMIT"
+        shell: bash
