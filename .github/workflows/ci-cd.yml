@@ -47,23 +47,32 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      - name: Install SSH client (if needed)
+        run: |
+          sudo apt-get update && sudo apt-get install -y openssh-client
+
       - name: Start SSH agent and add key
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Add server to known_hosts
+      - name: Add server to known_hosts (allow failures)
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
+          # If keyscan fails (e.g. network issue), do not break the build
+          ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts || true
 
       - name: Deploy via SSH
+        env:
+          IMAGE_NAME: "ghcr.io/kaka556kevin/2305017"
+          TAG_COMMIT: "${{ github.ref == 'refs/heads/master' && github.sha }}"
         run: |
-          IMAGE_NAME="ghcr.io/kaka556kevin/2305017"
-          TAG_COMMIT="${IMAGE_NAME}:${{ github.sha }}"
-          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} << EOF
-            docker login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
-            docker pull $TAG_COMMIT
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
+            # Log into GHCR on the remote host
+            echo "$GITHUB_TOKEN" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            # Pull and restart container
+            docker pull $IMAGE_NAME:${{ github.sha }}
             docker rm -f my-app || true
-            docker run -d -p 80:80 --name my-app $TAG_COMMIT
+            docker run -d -p 80:80 --name my-app $IMAGE_NAME:${{ github.sha }}
           EOF
