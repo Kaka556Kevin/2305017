@@ -55,16 +55,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y openssh-client netcat-openbsd
 
-      - name: Start SSH agent & add key (manual)
-        run: |
-          # Start a background ssh-agent
-          eval "$(ssh-agent -s)"
-
-          # Write the private key to a temporary file and add it
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/deploy_key
-          chmod 600 /tmp/deploy_key
-          ssh-add /tmp/deploy_key
-
       - name: Wait for SSH to open on port 2222 (up to 50s)
         run: |
           echo "Checking SSH port 2222 on ${{ secrets.SERVER_IP }}..."
@@ -92,24 +82,20 @@ jobs:
           ssh-keyscan -p 2222 -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts || true
 
       - name: Deploy via SSH (port 2222)
-        env:
-          IMAGE_NAME: ${{ env.IMAGE_NAME }}
         run: |
-          ssh -vvv \
-            -p 2222 \
-            -o StrictHostKeyChecking=no \
-            -o ConnectTimeout=10 \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} <<EOF
-              # Log in on the remote host to GHCR so `docker pull` works
-              echo "${{ secrets.GITHUB_TOKEN }}" \
-                | docker login ghcr.io \
-                  -u ${{ github.actor }} \
-                  --password-stdin
+          ssh -i /home/deployer/.ssh/id_rsa \
+              -o StrictHostKeyChecking=no \
+              -o ConnectTimeout=10 \
+              -p 2222 \
+              deployer@${{ secrets.SERVER_IP }} <<EOF
+            # Log in on the remote host to GHCR so `docker pull` works
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io \
+              -u ${{ github.actor }} --password-stdin
 
-              # Pull the newly built image (tagged by commit SHA)
-              docker pull "${IMAGE_NAME}:${{ github.sha }}"
+            # Pull the newly built image (tagged by commit SHA)
+            docker pull "${{ env.IMAGE_NAME }}:${{ github.sha }}"
 
-              # Stop & remove any old container, then run the new one
-              docker rm -f my-app || true
-              docker run -d -p 80:80 --name my-app "${IMAGE_NAME}:${{ github.sha }}"
-            EOF
+            # Stop & remove any old container, then run the new one
+            docker rm -f my-app || true
+            docker run -d -p 80:80 --name my-app "${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          EOF
