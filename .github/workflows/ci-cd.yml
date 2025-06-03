@@ -1,5 +1,12 @@
 name: CI-CD Pipeline
 
+# ------------------------------------------------------------
+# 1) Tambahkan blok permissions agar GITHUB_TOKEN dapat menulis ke GHCR
+# ------------------------------------------------------------
+permissions:
+  contents: read             # Agar Actions bisa checkout kode
+  packages: write            # Agar GITHUB_TOKEN bisa push image ke GHCR
+
 on:
   push:
     branches:
