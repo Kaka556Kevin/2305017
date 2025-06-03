@@ -57,32 +57,25 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Test SSH connectivity
+      - name: Optional: Test SSH connectivity
         run: |
           echo "Checking SSH port on ${{ secrets.SERVER_IP }}..."
-          for i in {1..5}; do
-            if nc -z ${{ secrets.SERVER_IP }} 22; then
-              echo "SSH port is open" && break
-            else
-              echo "Port 22 closed, retrying in 10s..." && sleep 10
-            fi
-          done
+          if ! nc -z ${{ secrets.SERVER_IP }} 22; then
+            echo "Warning: port 22 unreachable, continuing to action step may still retry."
+          fi
 
-      - name: Add server to known_hosts (allow failures)
-        run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts || true
-
-      - name: Deploy via SSH
-        env:
-          IMAGE_NAME: "ghcr.io/kaka556kevin/2305017"
-        run: |
-          ssh -vvv -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
-            # Log into GHCR on the remote host
+      - name: Deploy via SSH Action
+        uses: appleboy/ssh-action@v0.1.9
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          timeout: 30s
+          script: |
             echo "$GITHUB_TOKEN" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-            # Pull and restart container
-            docker pull $IMAGE_NAME:${{ github.sha }}
+            IMAGE_NAME="ghcr.io/kaka556kevin/2305017"
+            TAG_COMMIT="${IMAGE_NAME}:${{ github.sha }}"
+            docker pull "$TAG_COMMIT"
             docker rm -f my-app || true
-            docker run -d -p 80:80 --name my-app $IMAGE_NAME:${{ github.sha }}
-          EOF
+            docker run -d -p 80:80 --name my-app "$TAG_COMMIT"
