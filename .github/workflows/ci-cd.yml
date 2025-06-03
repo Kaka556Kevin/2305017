@@ -15,7 +15,7 @@ env:
 jobs:
   build-and-push:
     name: Build & Publish Docker Image
-    runs-on: ubuntu-latest     # Still runs on GitHub-hosted
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
@@ -46,9 +46,6 @@ jobs:
 
   deploy:
     name: Deploy to Production Server
-    # ← Change this from ubuntu-latest to your self-hosted runner
-    # If your runner has no extra labels, just use "self-hosted"
-    # If you gave it additional labels (e.g. "linux", "x64", or a custom "hadid"), include them here.
     runs-on: [self-hosted, linux, x64]
     needs: build-and-push
 
@@ -58,10 +55,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y openssh-client netcat-openbsd
 
-      - name: Start SSH agent & add key
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+      # ← Replace webfactory/ssh-agent with a manual ssh-agent setup:
+      - name: Start SSH agent & add key (manual)
+        run: |
+          # Start the agent in the background
+          eval "$(ssh-agent -s)"
+          # Write the private key to a temp file and add it
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+          ssh-add /tmp/deploy_key
 
       - name: Wait for SSH to open on port 2222 (up to 50s)
         run: |
