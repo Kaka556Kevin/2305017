@@ -68,6 +68,11 @@ jobs:
             fi
           done
 
+      - name: Debug SSH target
+        run: |
+          echo "Using SERVER_IP = ${{ secrets.SERVER_IP }}"
+          nc -z ${{ secrets.SERVER_IP }} 22 && echo "port open" || echo "port closed"
+
       - name: Add server to known_hosts (allow failures)
         run: |
           mkdir -p ~/.ssh
