@@ -97,23 +97,16 @@ jobs:
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io \
               -u ${{ github.actor }} --password-stdin
 
-            # 5.b) Pastikan port 80 bebas (hentikan process/container yang masih pakai port 80)
-            #      Jika container lama masih jalan, perintah `docker rm -f my-app` akan menghentikannya.
-            #      Jika ternyata ada service lain non-Docker yang pakai port 80, di sinilah perlu di‐kill atau di‐stop.
-            #
-            #      Contoh (opsional) kalau Anda mau cek process manual:
-            #      PID_PORT80=$(lsof -t -i :80) || true
-            #      if [ -n "$PID_PORT80" ]; then
-            #        echo "Stopping process on port 80 (PID $PID_PORT80)..."
-            #        kill -9 $PID_PORT80 || true
-            #      fi
+            # 5.b) Hentikan dan hapus container lama (jika ada)
+            docker rm -f my-app || true
 
             # 5.c) Pull image baru (commit SHA)
             docker pull "${{ env.IMAGE_NAME }}:${{ github.sha }}"
 
-            # 5.d) Stop & remove container lama (jika masih ada)
-            docker rm -f my-app || true
+            # 5.d) Jalankan container baru pada port 443 (bukan 80)
+            docker run -d -p 443:80 --name my-app "${{ env.IMAGE_NAME }}:${{ github.sha }}"
 
-            # 5.e) Jalankan container baru di port 80
-            docker run -d -p 80:80 --name my-app "${{ env.IMAGE_NAME }}:${{ github.sha }}"
+            # Catatan:
+            # - Jika Anda ingin pakai port 22 (bukan 80), ganti -p 443:80 menjadi -p 22:80
+            # - Jika Anda ingin pakai port 2222, ganti -p 443:80 menjadi -p 2222:80
           EOF
