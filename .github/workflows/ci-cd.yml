@@ -1,16 +1,16 @@
 name: CI-CD Pipeline
-
-permissions:
-  contents: read
-  packages: write
-
 on:
   push:
     branches:
       - master
 
 env:
-  IMAGE_NAME: ghcr.io/kaka556kevin/2305017
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/${
+    { github.event.repository.name }}
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
   build-and-push:
@@ -21,6 +21,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      - name: Set up QEMU (untuk multi-arch, optional)
+        uses: docker/setup-qemu-action@v2
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v2
         with:
@@ -30,34 +33,43 @@ jobs:
 
       - name: Build Docker image
         run: |
-          TAG_COMMIT="${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          TAG_SHA="${{ env.IMAGE_NAME }}:${{ github.sha }}"
           TAG_LATEST="${{ env.IMAGE_NAME }}:latest"
-          docker build -t "$TAG_COMMIT" -t "$TAG_LATEST" .
+          docker build \
+            -t "$TAG_SHA" \
+            -t "$TAG_LATEST" \
+            .
 
       - name: Push Docker image
         run: |
-          TAG_COMMIT="${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          TAG_SHA="${{ env.IMAGE_NAME }}:${{ github.sha }}"
           TAG_LATEST="${{ env.IMAGE_NAME }}:latest"
-          docker push "$TAG_COMMIT"
+          docker push "$TAG_SHA"
           docker push "$TAG_LATEST"
 
   deploy:
     name: Deploy to Production Server
-    runs-on: [self-hosted, linux, x64]  # this means the runner is the production box
+    runs-on: [self-hosted, linux, x64]
     needs: build-and-push
 
     steps:
-      - name: Pull & Restart Container Locally
-        run: |
-          # First, log into GHCR (so `docker pull` works without needing SSH)
-          echo "${{ secrets.GITHUB_TOKEN }}" \
-            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-          # Pull the new image tagged by commit SHA
+      - name: Log in to GitHub Container Registry (lagi)
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull & Restart Container di Server (langsung)
+        run: |
+          # 1) Pull image yang baru saja kita push
           docker pull "${{ env.IMAGE_NAME }}:${{ github.sha }}"
 
-          # Stop & remove existing container (if it’s running)
+          # 2) Hentikan container lama (jika ada), lalu hapus
           docker rm -f my-app || true
 
-          # Run the new container on port 80
+          # 3) Jalankan container baru di port 80
           docker run -d -p 80:80 --name my-app "${{ env.IMAGE_NAME }}:${{ github.sha }}"
