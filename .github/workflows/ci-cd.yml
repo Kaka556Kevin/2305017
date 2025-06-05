@@ -50,59 +50,70 @@ jobs:
     needs: build-and-push
 
     steps:
+      # (1) Pastikan SSH client & netcat terpasang di runner
       - name: Install SSH client & Netcat
         run: |
           sudo apt-get update
           sudo apt-get install -y openssh-client netcat-openbsd
 
-      # ← NEW: write my SSH private key into ~/.ssh/id_rsa and chmod it
+      # (2) Tulis private key kita ke ~/.ssh/id_rsa dan chmod-nya
       - name: Set up SSH key
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
 
+      # (3) Tunggu sampai port SSH (2222) di server produksi terbuka
       - name: Wait for SSH to open on port 2222 (up to 50s)
         run: |
           echo "Checking SSH port 2222 on ${{ secrets.SERVER_IP }}..."
-          success=1
-
           for i in {1..5}; do
             if nc -z ${{ secrets.SERVER_IP }} 2222; then
               echo "✅ SSH port 2222 is open!"
-              success=0
-              break
+              exit 0
             else
-              echo "⏳ Port 2222 closed (attempt $i/5). Retrying in 10 seconds..."
+              echo "⏳ Port 2222 closed (attempt $i/5). Retrying in 10s..."
               sleep 10
             fi
           done
+          echo "❌ SSH port 2222 still closed after 5 attempts. Aborting."
+          exit 1
 
-          if [ $success -ne 0 ]; then
-            echo "❌ SSH port 2222 still closed after 5 attempts. Aborting."
-            exit 1
-          fi
-
+      # (4) Tambahkan server ke known_hosts agar tidak muncul prompt security
       - name: Add server to known_hosts (allow failures)
         run: |
           mkdir -p ~/.ssh
           ssh-keyscan -p 2222 -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts || true
 
+      # (5) SSH sekali saja ke server, lalu jalankan perintah Docker
       - name: Deploy via SSH (port 2222)
         run: |
           ssh -i ~/.ssh/id_rsa \
               -o StrictHostKeyChecking=no \
               -o ConnectTimeout=10 \
               -p 2222 \
-              deployer@${{ secrets.SERVER_IP }} <<EOF
-            # Log in on the remote host to GHCR so `docker pull` works
+              deployer@${{ secrets.SERVER_IP }} <<'EOF'
+            # 5.a) Login ke GHCR supaya `docker pull` bisa sukses
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io \
               -u ${{ github.actor }} --password-stdin
 
-            # Pull the newly built image (tagged by commit SHA)
+            # 5.b) Pastikan port 80 bebas (hentikan process/container yang masih pakai port 80)
+            #      Jika container lama masih jalan, perintah `docker rm -f my-app` akan menghentikannya.
+            #      Jika ternyata ada service lain non-Docker yang pakai port 80, di sinilah perlu di‐kill atau di‐stop.
+            #
+            #      Contoh (opsional) kalau Anda mau cek process manual:
+            #      PID_PORT80=$(lsof -t -i :80) || true
+            #      if [ -n "$PID_PORT80" ]; then
+            #        echo "Stopping process on port 80 (PID $PID_PORT80)..."
+            #        kill -9 $PID_PORT80 || true
+            #      fi
+
+            # 5.c) Pull image baru (commit SHA)
             docker pull "${{ env.IMAGE_NAME }}:${{ github.sha }}"
 
-            # Stop & remove any old container, then run the new one
+            # 5.d) Stop & remove container lama (jika masih ada)
             docker rm -f my-app || true
+
+            # 5.e) Jalankan container baru di port 80
             docker run -d -p 80:80 --name my-app "${{ env.IMAGE_NAME }}:${{ github.sha }}"
           EOF
