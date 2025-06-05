@@ -30,18 +30,18 @@ jobs:
 
       - name: Build Docker image
         run: |
-          TAG_COMMIT="${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          TAG_SHA="${{ env.IMAGE_NAME }}:${{ github.sha }}"
           TAG_LATEST="${{ env.IMAGE_NAME }}:latest"
           docker build \
-            -t "$TAG_COMMIT" \
+            -t "$TAG_SHA" \
             -t "$TAG_LATEST" \
             .
 
       - name: Push Docker image
         run: |
-          TAG_COMMIT="${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          TAG_SHA="${{ env.IMAGE_NAME }}:${{ github.sha }}"
           TAG_LATEST="${{ env.IMAGE_NAME }}:latest"
-          docker push "$TAG_COMMIT"
+          docker push "$TAG_SHA"
           docker push "$TAG_LATEST"
 
   deploy:
@@ -50,20 +50,20 @@ jobs:
     needs: build-and-push
 
     steps:
-      # (1) Pastikan SSH client & netcat terpasang di runner
+      # 1) Pastikan SSH client & netcat sudah terpasang
       - name: Install SSH client & Netcat
         run: |
           sudo apt-get update
           sudo apt-get install -y openssh-client netcat-openbsd
 
-      # (2) Tulis private key kita ke ~/.ssh/id_rsa dan chmod-nya
+      # 2) Tulis private key ke ~/.ssh/id_rsa, lalu chmod
       - name: Set up SSH key
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
 
-      # (3) Tunggu sampai port SSH (2222) di server produksi terbuka
+      # 3) Tunggu sampai SSH port 2222 terbuka
       - name: Wait for SSH to open on port 2222 (up to 50s)
         run: |
           echo "Checking SSH port 2222 on ${{ secrets.SERVER_IP }}..."
@@ -79,13 +79,13 @@ jobs:
           echo "❌ SSH port 2222 still closed after 5 attempts. Aborting."
           exit 1
 
-      # (4) Tambahkan server ke known_hosts agar tidak muncul prompt security
+      # 4) Tambahkan server ke known_hosts
       - name: Add server to known_hosts (allow failures)
         run: |
           mkdir -p ~/.ssh
           ssh-keyscan -p 2222 -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts || true
 
-      # (5) SSH sekali saja ke server, lalu jalankan perintah Docker
+      # 5) SSH sekali saja ke server, lalu jalankan Docker tanpa port 80
       - name: Deploy via SSH (port 2222)
         run: |
           ssh -i ~/.ssh/id_rsa \
@@ -93,20 +93,19 @@ jobs:
               -o ConnectTimeout=10 \
               -p 2222 \
               deployer@${{ secrets.SERVER_IP }} <<'EOF'
-            # 5.a) Login ke GHCR supaya `docker pull` bisa sukses
+            # a) Login ke GHCR untuk tarik image
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io \
               -u ${{ github.actor }} --password-stdin
 
-            # 5.b) Hentikan dan hapus container lama (jika ada)
+            # b) Stop & remove container lama (jika ada)
             docker rm -f my-app || true
 
-            # 5.c) Pull image baru (commit SHA)
+            # c) Pull image baru berdasarkan commit SHA
             docker pull "${{ env.IMAGE_NAME }}:${{ github.sha }}"
 
-            # 5.d) Jalankan container baru pada port 443 (bukan 80)
-            docker run -d -p 443:80 --name my-app "${{ env.IMAGE_NAME }}:${{ github.sha }}"
+            # d) Jalankan container baru, mapping host port 2222 → container port 80
+            #    Note: container tetap jalan di port 80 internal, tapi host hanya pakai 2222.
+            docker run -d -p 2222:80 --name my-app "${{ env.IMAGE_NAME }}:${{ github.sha }}"
 
-            # Catatan:
-            # - Jika Anda ingin pakai port 22 (bukan 80), ganti -p 443:80 menjadi -p 22:80
-            # - Jika Anda ingin pakai port 2222, ganti -p 443:80 menjadi -p 2222:80
+            # Akses aplikasi: http://<SERVER_IP>:2222
           EOF
